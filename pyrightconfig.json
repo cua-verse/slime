@@ -1,0 +1,26 @@
+{
+  "extraPaths": [
+    "/root/Megatron-LM",
+    "/sgl-workspace/sglang/python",
+    "/workspaces/slime"
+  ],
+  "reportArgumentType": "none",
+  "reportAssignmentType": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportUnboundVariable": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportOptionalSubscript": "none",
+  "reportOptionalCall": "none",
+  "reportOptionalIterable": "none",
+  "reportOptionalContextManager": "none",
+  "reportOptionalOperand": "none",
+  "reportGeneralTypeIssues": "none",
+  "reportCallIssue": "none",
+  "reportIndexIssue": "none",
+  "reportReturnType": "none",
+  "reportOperatorIssue": "none",
+  "reportPossiblyUnboundVariable": "none",
+  "reportInvalidTypeArguments": "none",
+  "reportAbstractUsage": "none",
+  "reportFunctionMemberAccess": "none"
+}
