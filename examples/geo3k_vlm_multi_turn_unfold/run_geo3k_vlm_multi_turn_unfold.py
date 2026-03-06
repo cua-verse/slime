@@ -8,18 +8,19 @@ Usage:
     python examples/geo3k_vlm_multi_turn_unfold/run_geo3k_vlm_multi_turn_unfold.py
 
 Env overrides:
-    SLIME_SCRIPT_MODEL_NAME   (default: Qwen3-VL-2B-Thinking)
+    SLIME_SCRIPT_MODEL_NAME   (default: Qwen3-VL-4B-Thinking)
     SLIME_SCRIPT_NUM_GPUS     (default: 4)
-    SLIME_SCRIPT_TRAIN_BACKEND (default: fsdp)
+    SLIME_SCRIPT_TRAIN_BACKEND (default: megatron)
     SLIME_SCRIPT_EXTERNAL_RAY  (default: 0)
 """
 
 import os
+from datetime import datetime
 
 import slime.utils.misc as U
 from slime.utils.external_utils.command_utils import execute_train
 
-MODEL_NAME = os.environ.get("SLIME_SCRIPT_MODEL_NAME", "Qwen3-VL-2B-Thinking")
+MODEL_NAME = os.environ.get("SLIME_SCRIPT_MODEL_NAME", "Qwen3-VL-4B-Thinking")
 assert MODEL_NAME in {
     "Qwen3-VL-2B-Instruct",
     "Qwen3-VL-4B-Instruct",
@@ -31,7 +32,7 @@ assert MODEL_NAME in {
 
 NUM_GPUS = int(os.environ.get("SLIME_SCRIPT_NUM_GPUS", "4"))
 EXTERNAL_RAY = int(os.environ.get("SLIME_SCRIPT_EXTERNAL_RAY", "0"))
-TRAIN_BACKEND = os.environ.get("SLIME_SCRIPT_TRAIN_BACKEND", "fsdp").lower()
+TRAIN_BACKEND = os.environ.get("SLIME_SCRIPT_TRAIN_BACKEND", "megatron").lower()
 assert TRAIN_BACKEND in {"fsdp", "megatron"}
 
 DATASET_NAME = "VeraIsHere/geo3k_imgurl_processed"
@@ -111,9 +112,9 @@ def execute():
     )
 
     sglang_args = (
-        "--rollout-num-gpus-per-engine 1 "
-        "--sglang-mem-fraction-static 0.6 "
-        f"--sglang-cuda-graph-bs {' '.join(map(str, [1, 2, 4, 8] + list(range(16, 257, 8))))} "
+        "--rollout-num-gpus-per-engine 2 "
+        "--sglang-mem-fraction-static 0.5 "
+        f"--sglang-cuda-graph-bs {' '.join(map(str, [1, 2, 4, 8] + list(range(16, 129, 8))))} "
     )
 
     fsdp_args = (
@@ -127,7 +128,7 @@ def execute():
     megatron_args = (
         "--train-backend megatron "
         f"--load /root/models/{MODEL_NAME} "
-        "--tensor-model-parallel-size 4 "
+        "--tensor-model-parallel-size 2 "
         "--sequence-parallel "
         "--pipeline-model-parallel-size 1 "
         "--context-parallel-size 1 "
@@ -137,7 +138,7 @@ def execute():
         "--recompute-method uniform "
         "--recompute-num-layers 1 "
         "--use-dynamic-batch-size "
-        "--max-tokens-per-gpu 4096 "
+        "--max-tokens-per-gpu 2048 "
         "--attention-dropout 0.0 "
         "--hidden-dropout 0.0 "
         "--accumulate-allreduce-grads-in-fp32 "
@@ -161,6 +162,8 @@ def execute():
         backend_args = fsdp_args
         megatron_model_type = None
 
+    dump_dir = f"/tmp/slime_debug/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
     train_args = (
         f"{ckpt_args} "
         f"{rollout_args} "
@@ -170,6 +173,7 @@ def execute():
         f"{backend_args} "
         f"{misc_args} "
         f"{wandb_args} "
+        f"--dump-details {dump_dir} "
     )
 
     execute_train(

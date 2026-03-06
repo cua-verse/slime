@@ -14,6 +14,7 @@ If `$ARGUMENTS` is empty or is natural language (not a shell command), wait for 
 1. If the task involves a shell command: start it with `run_in_background: true` in the Bash tool call
 2. Poll with `TaskOutput(task_id, block=true, timeout=60000)` — at most once per minute
    - Track previous output length; inspect only newly added lines each poll
+   - If this is a training task, also run `nvidia-smi` each poll to check GPU utilization
 3. **During each poll: minimal thinking only.** Scan new lines for obvious errors:
    - traceback / exception
    - CUDA OOM

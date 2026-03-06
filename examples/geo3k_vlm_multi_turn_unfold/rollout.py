@@ -9,10 +9,15 @@ Key differences from geo3k_vlm_multi_turn:
      the training-time context matches the generation-time context exactly.
 
 Training sample structure for turn k:
-  tokens           = prompt_ids + strip(resp_1) + obs_1 + ... + strip(resp_{k-1}) + obs_{k-1} + resp_k
-  loss_mask        = [0 × context_offset] + [1 × len(resp_k)]
-  response_length  = len(tokens) - len(prompt_ids)
-  rollout_log_probs = [0.0 × context_offset] + actual_log_probs_k
+  tokens           = context_k + resp_k
+  where context_k  = prompt_ids + strip(resp_1) + obs_1 + ... + strip(resp_{k-1}) + obs_{k-1}
+  loss_mask        = [1 × len(resp_k)]
+  response_length  = len(resp_k)
+  rollout_log_probs = actual_log_probs_k
+
+  The entire context_k (including stripped history and observations) is treated
+  as the "prompt" from the training framework's perspective, so that
+  total_length = len(context_k) + response_length always holds.
 
 convert_samples_to_train_data():
   Handles GRPO advantage normalization at the ROLLOUT level (not per-turn):
@@ -43,11 +48,22 @@ from slime.utils.types import Sample
 
 _THINK_COMPLETE_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _THINK_OPEN_RE = re.compile(r"<think>.*$", re.DOTALL)
+# Handles the case where <think> is in the context prefix and </think> is in the response.
+# Qwen3 chat template appends <|im_start|>assistant\n<think>\n before generation,
+# so the response starts inside a think block (no opening tag in response text).
+_THINK_ORPHAN_CLOSE_RE = re.compile(r"^.*?</think>", re.DOTALL)
 
 
 def strip_think(text: str) -> str:
-    """Remove all <think>...</think> blocks (complete and truncated)."""
+    """Remove all <think>...</think> blocks (complete and truncated).
+
+    Handles three cases:
+    1. Complete blocks: <think>content</think> → removed.
+    2. Orphan close: content</think> at start (think opened in context prefix) → removed.
+    3. Truncated open: <think>content at end (generation cut off) → removed.
+    """
     text = _THINK_COMPLETE_RE.sub("", text)
+    text = _THINK_ORPHAN_CLOSE_RE.sub("", text)
     text = _THINK_OPEN_RE.sub("", text)
     return text
 
@@ -85,7 +101,6 @@ async def _run_text_inference(
 
 def _make_turn_sample(
     original_sample: Sample,
-    prompt_ids: list[int],
     context_ids: list[int],
     response_ids: list[int],
     response_log_probs: list[float],
@@ -94,20 +109,16 @@ def _make_turn_sample(
     turn_idx: int,
     mm_train_buffer: list[dict | None],
 ) -> Sample:
-    """Build a training Sample for one turn."""
-    context_offset = len(context_ids) - len(prompt_ids)  # stripped prev + obs
+    """Build a training Sample for one turn.
 
+    context_ids is treated as the full "prompt" by the training framework:
+      total_length = len(context_ids) + response_length
+    Only resp_k tokens are trained on (loss_mask = all-ones of len response_ids).
+    """
     tokens = context_ids + response_ids
-    loss_mask = [0] * context_offset + [1] * len(response_ids)
-    rollout_log_probs = [0.0] * context_offset + response_log_probs
-    response_length = context_offset + len(response_ids)
-
-    assert len(loss_mask) == response_length, (
-        f"loss_mask {len(loss_mask)} != response_length {response_length}"
-    )
-    assert len(rollout_log_probs) == response_length, (
-        f"rollout_log_probs {len(rollout_log_probs)} != response_length {response_length}"
-    )
+    response_length = len(response_ids)
+    loss_mask = [1] * response_length
+    rollout_log_probs = list(response_log_probs)
 
     mm_train = _merge_multimodal_train_inputs(mm_train_buffer)
 
@@ -210,7 +221,7 @@ async def generate(args: Any, sample: Sample, sampling_params: dict) -> list[Sam
 
         if budget is not None and budget <= 0:
             s = _make_turn_sample(
-                sample, prompt_ids, stripped_context_ids, [], [], "",
+                sample, stripped_context_ids, [], [], "",
                 Sample.Status.TRUNCATED, 0, mm_train_buffer,
             )
             return [s]
@@ -237,7 +248,6 @@ async def generate(args: Any, sample: Sample, sampling_params: dict) -> list[Sam
             # ---- Build per-turn training Sample --------------------------
             turn_sample = _make_turn_sample(
                 sample,
-                prompt_ids,
                 list(stripped_context_ids),  # snapshot BEFORE appending this turn
                 response_ids,
                 response_log_probs,
@@ -407,17 +417,6 @@ def convert_samples_to_train_data(args: Any, samples) -> dict:
     # ------------------------------------------------------------------
     # Assemble train_data dict
     # ------------------------------------------------------------------
-    loss_masks = []
-    for s in flat:
-        if s.loss_mask is None:
-            s.loss_mask = [1] * s.response_length
-        assert len(s.loss_mask) == s.response_length, (
-            f"loss_mask {len(s.loss_mask)} != response_length {s.response_length}"
-        )
-        if s.remove_sample:
-            s.loss_mask = [0] * s.response_length
-        loss_masks.append(s.loss_mask)
-
     train_data: dict = {
         "tokens": [s.tokens for s in flat],
         "response_lengths": [s.response_length for s in flat],
@@ -425,7 +424,7 @@ def convert_samples_to_train_data(args: Any, samples) -> dict:
         "raw_reward": [s.reward for s in flat],
         "truncated": [1 if s.status == Sample.Status.TRUNCATED else 0 for s in flat],
         "sample_indices": [s.index for s in flat],
-        "loss_masks": loss_masks,
+        "loss_masks": [s.loss_mask for s in flat],
     }
 
     if flat[0].rollout_log_probs is not None:

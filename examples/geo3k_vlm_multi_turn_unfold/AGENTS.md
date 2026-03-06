@@ -24,12 +24,14 @@
 
 ```
 Turn k 的训练 Sample:
-  tokens      = [prompt_ids] + [strip_think(resp_1)] + [obs_1] + ... + [strip_think(resp_{k-1})] + [obs_{k-1}] + [resp_k]
-  loss_mask   = [0 × (上述 context 长度)] + [1 × len(resp_k)]
-  response_length = len(tokens) - len(prompt_ids)
-  rollout_log_probs = [0.0 × context_offset] + actual_log_probs_k
+  context_k   = [prompt_ids] + [strip_think(resp_1)] + [obs_1] + ... + [strip_think(resp_{k-1})] + [obs_{k-1}]
+  tokens      = context_k + [resp_k]
+  loss_mask   = [1 × len(resp_k)]
+  response_length = len(resp_k)
+  rollout_log_probs = actual_log_probs_k
 ```
 
+- `context_k` 整体作为训练框架的"prompt"，满足 `total_length = len(context_k) + response_length`
 - `prompt_ids`：由 HuggingFace processor 处理（含展开的 image pad tokens）
 - `strip_think(resp)` 使用正则 `<think>.*?</think>` 剥离完整 think 块，`<think>.*$` 剥离末尾截断块
 - 当前轮的 `<think>` 保留（loss_mask=1，正常训练）
